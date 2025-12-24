@@ -1,491 +1,467 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { 
-  Play, 
-  Pause, 
-  CheckCircle2, 
-  MoreVertical, 
-  Clock, 
-  ChevronRight, 
-  Plus, 
-  Trash2,
-  Minimize2,
-  Calendar as CalendarIcon,
-  X,
-  Edit2,
-  Save,
-  ListTodo,
-  Trophy
-} from 'lucide-react';
-
-// --- Utilitários ---
-
-const formatTime = (seconds) => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-};
-
-const formatShortTime = (seconds) => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
-};
-
-const getDaysUntilSunday = () => {
-  const today = new Date();
-  const dayOfWeek = today.getDay();
-  return dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
-};
-
-const COLORS = [
-  'bg-emerald-500', 'bg-blue-500', 'bg-violet-500', 
-  'bg-orange-500', 'bg-rose-500', 'bg-amber-500', 'bg-cyan-500'
-];
-
-export default function ChronosApp() {
-  const [activeTab, setActiveTab] = useState('dashboard');
-  
-  // --- Estados com LocalStorage ---
-  
-  const [subjects, setSubjects] = useState(() => {
-    const saved = localStorage.getItem('chronos_subjects');
-    return saved ? JSON.parse(saved) : [
-      { id: 1, name: 'Matemática Avançada', color: 'bg-emerald-500', goalHours: 10, completedSeconds: 0 }
-    ];
-  });
-
-  const [tasks, setTasks] = useState(() => {
-    const saved = localStorage.getItem('chronos_tasks');
-    const lastCleanup = localStorage.getItem('chronos_last_cleanup');
-    const today = new Date().toLocaleDateString('pt-BR');
-
-    let parsedTasks = saved ? JSON.parse(saved) : [];
-
-    // Lógica para excluir tarefas diárias antigas (após as 23:59)
-    if (lastCleanup !== today) {
-      // Remove tarefas que eram do dia anterior e marca o cleanup
-      parsedTasks = parsedTasks.filter(t => t.date === today || t.date === "Indeterminado"); 
-      localStorage.setItem('chronos_last_cleanup', today);
-    }
-
-    return parsedTasks;
-  });
-  
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [activeSubjectId, setActiveSubjectId] = useState(null);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [isImmersionMode, setIsImmersionMode] = useState(false);
-  const [editingSubject, setEditingSubject] = useState(null);
-  const [isAddingSubject, setIsAddingSubject] = useState(false);
-  const [showSubjectMenu, setShowSubjectMenu] = useState(null);
-
-  // Estados para Nova Tarefa
-  const [newTaskText, setNewTaskText] = useState("");
-  const [newTaskDate, setNewTaskDate] = useState(new Date().toISOString().split('T')[0]);
-
-  const timerRef = useRef(null);
-  const activeSubject = subjects.find(s => s.id === activeSubjectId);
-
-  // --- Efeitos ---
-
-  useEffect(() => {
-    localStorage.setItem('chronos_subjects', JSON.stringify(subjects));
-  }, [subjects]);
-
-  useEffect(() => {
-    localStorage.setItem('chronos_tasks', JSON.stringify(tasks));
-  }, [tasks]);
-
-  useEffect(() => {
-    if (isTimerRunning && activeSubjectId) {
-      timerRef.current = setInterval(() => {
-        setSubjects(prev => prev.map(sub => {
-          if (sub.id === activeSubjectId) {
-            return { ...sub, completedSeconds: sub.completedSeconds + 1 };
-          }
-          return sub;
-        }));
-      }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isTimerRunning, activeSubjectId]);
-
-  // --- Cálculos ---
-
-  const totalGoalSeconds = subjects.reduce((acc, s) => acc + (s.goalHours * 3600), 0);
-  const totalCompletedSeconds = subjects.reduce((acc, s) => acc + s.completedSeconds, 0);
-  const globalProgress = totalGoalSeconds > 0 ? Math.round((totalCompletedSeconds / totalGoalSeconds) * 100) : 0;
-
-  // Filtragem de Tarefas Diárias (Hoje)
-  const todayString = new Date().toLocaleDateString('pt-BR');
-  const dailyTasks = tasks.filter(t => t.date === todayString);
-  const completedDailyTasks = dailyTasks.filter(t => t.completed).length;
-  const dailyProgress = dailyTasks.length > 0 ? Math.round((completedDailyTasks / dailyTasks.length) * 100) : 0;
-
-  // --- Handlers ---
-
-  const handleSaveSubject = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const name = formData.get('name');
-    const hours = parseInt(formData.get('hours'));
-
-    if (editingSubject) {
-      setSubjects(subjects.map(s => s.id === editingSubject.id ? { ...s, name, goalHours: hours } : s));
-      setEditingSubject(null);
-    } else {
-      const newSub = {
-        id: Date.now(),
-        name,
-        goalHours: hours,
-        completedSeconds: 0,
-        color: COLORS[subjects.length % COLORS.length]
-      };
-      setSubjects([...subjects, newSub]);
-      setIsAddingSubject(false);
-    }
-    setShowSubjectMenu(null);
-  };
-
-  const handleAddTask = () => {
-    if (!newTaskText.trim()) return;
-    
-    // Ajuste da data para evitar problemas de fuso horário local
-    const dateParts = newTaskDate.split('-');
-    const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
-    const formattedDate = dateObj.toLocaleDateString('pt-BR');
-
-    const newTask = {
-      id: Date.now(),
-      text: newTaskText,
-      completed: false,
-      date: formattedDate,
-      rawDate: newTaskDate
-    };
-
-    setTasks(prev => [...prev, newTask].sort((a, b) => new Date(a.rawDate) - new Date(b.rawDate)));
-    setNewTaskText("");
-  };
-
-  const toggleTask = (id) => {
-    setTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
-  };
-
-  const deleteTask = (id) => {
-    setTasks(tasks.filter(t => t.id !== id));
-  };
-
-  const daysInMonth = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const date = new Date(year, month, 1);
-    const days = [];
-    for (let i = 0; i < date.getDay(); i++) days.push(null);
-    while (date.getMonth() === month) {
-      days.push(new Date(date));
-      date.setDate(date.getDate() + 1);
-    }
-    return days;
-  }, [currentDate]);
-
-  return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans flex flex-col overflow-hidden">
-      
-      {/* Navbar */}
-      {!isImmersionMode && (
-        <nav className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-tr from-emerald-600 to-emerald-400 rounded-lg flex items-center justify-center">
-              <Clock className="w-5 h-5 text-zinc-950" />
-            </div>
-            <span className="font-bold text-xl tracking-tight">CHRONOS</span>
-          </div>
-          
-          <div className="flex items-center gap-6">
-            <button onClick={() => setActiveTab('dashboard')} className={`text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}>Metas</button>
-            <button onClick={() => setActiveTab('planning')} className={`text-sm font-medium transition-colors ${activeTab === 'planning' ? 'text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}>Planejamento</button>
-            <div className="w-px h-4 bg-white/10 mx-2"></div>
-            <div className="text-right hidden sm:block">
-              <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Fim do Ciclo</p>
-              <p className="text-xs font-bold text-emerald-400">{getDaysUntilSunday() === 0 ? "Hoje" : `em ${getDaysUntilSunday()} dias`}</p>
-            </div>
-          </div>
-        </nav>
-      )}
-
-      <main className="flex-1 overflow-y-auto relative custom-scroll p-6">
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHRONOS - Gestão de Estudos</title>
+    <!-- Fontes Modernas e Limpas -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --font-main: 'Plus Jakarta Sans', sans-serif;
+            --font-title: 'Sora', sans-serif;
+        }
+        body {
+            font-family: var(--font-main);
+            background-color: #050505;
+            color: #ededed;
+        }
+        h1, h2, h3, .font-title, button {
+            font-family: var(--font-title);
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.9);
+            cursor: pointer;
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 10px; }
         
-        {/* VIEW: DASHBOARD */}
-        {activeTab === 'dashboard' && !isImmersionMode && (
-          <div className="max-w-7xl mx-auto space-y-8">
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-              <div>
-                <h1 className="text-3xl font-light tracking-tight">Painel de <span className="font-bold text-emerald-400">Progresso</span></h1>
-                <div className="flex items-center gap-3 mt-1">
-                  <div className="h-2 w-32 bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${globalProgress}%` }}></div>
-                  </div>
-                  <p className="text-zinc-500 text-sm font-medium">{globalProgress}% Total Concluído</p>
-                </div>
-              </div>
-              <button onClick={() => setIsAddingSubject(true)} className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-emerald-500/10">
-                <Plus className="w-5 h-5" /> Nova Matéria
-              </button>
-            </header>
+        .fade-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="antialiased selection:bg-purple-500/30 min-h-screen p-6 md:p-10">
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {subjects.map(subject => {
-                const totalSeconds = subject.goalHours * 3600;
-                const progress = Math.min(100, (subject.completedSeconds / totalSeconds) * 100);
-                const remaining = Math.max(0, totalSeconds - subject.completedSeconds);
-                
-                return (
-                  <div key={subject.id} className="group bg-zinc-900/40 border border-white/5 rounded-[2rem] p-6 hover:border-emerald-500/30 transition-all">
-                    <div className="flex justify-between items-start mb-6">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                           <div className={`w-2 h-2 rounded-full ${subject.color}`}></div>
-                           <h3 className="font-bold text-zinc-200">{subject.name}</h3>
-                        </div>
-                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{subject.goalHours}H Planejadas</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                         <span className="text-xs font-mono font-bold text-emerald-400">{Math.round(progress)}%</span>
-                         <button onClick={() => setShowSubjectMenu(showSubjectMenu === subject.id ? null : subject.id)} className="text-zinc-600 hover:text-zinc-300 p-1"><MoreVertical className="w-4 h-4" /></button>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-6">
-                      <div className="flex justify-between items-end">
-                        <div>
-                          <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Restante</p>
-                          <p className="text-3xl font-mono font-black text-white tracking-tighter">
-                            {formatShortTime(remaining)}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Feito</p>
-                          <p className="text-sm font-mono text-zinc-300">{formatShortTime(subject.completedSeconds)}</p>
-                        </div>
-                      </div>
-
-                      <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
-                        <div className={`h-full ${subject.color} transition-all duration-1000`} style={{ width: `${progress}%` }}></div>
-                      </div>
-                      
-                      <button 
-                        onClick={() => { setActiveSubjectId(subject.id); setIsImmersionMode(true); setIsTimerRunning(true); }} 
-                        className="w-full bg-zinc-950 border border-white/10 hover:bg-emerald-500 hover:text-zinc-950 hover:border-emerald-500 py-3 rounded-2xl text-sm font-bold flex items-center justify-center gap-2 transition-all group-hover:scale-[1.02]"
-                      >
-                        <Play className="w-4 h-4 fill-current" /> Focar Agora
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+    <header class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 mb-12">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-purple-600/20">
+                <i data-lucide="clock" class="text-white w-6 h-6"></i>
             </div>
-          </div>
-        )}
-
-        {/* VIEW: PLANEJAMENTO */}
-        {activeTab === 'planning' && !isImmersionMode && (
-          <div className="max-w-7xl mx-auto space-y-10 animate-in fade-in duration-500">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* Calendário */}
-              <div className="lg:col-span-8 space-y-4">
-                <h2 className="text-xl font-bold flex items-center gap-2"><CalendarIcon className="w-5 h-5 text-indigo-400" /> Visão Mensal</h2>
-                <div className="bg-zinc-900/40 border border-white/5 rounded-[2rem] p-6">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="capitalize font-bold text-lg">{currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</h3>
-                    <div className="flex gap-2">
-                      <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight className="w-5 h-5 rotate-180" /></button>
-                      <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight className="w-5 h-5" /></button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-7 gap-2">
-                    {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, idx) => (
-                      <div key={`weekday-${idx}`} className="text-center text-[10px] font-bold text-zinc-600 pb-2">{d}</div>
-                    ))}
-                    {daysInMonth.map((date, i) => (
-                      <div key={`day-${i}`} className={`aspect-square flex items-center justify-center rounded-xl text-sm ${!date ? '' : date.toDateString() === new Date().toDateString() ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900/60 hover:bg-zinc-800'}`}>
-                        {date?.getDate()}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Tarefas Diárias */}
-              <div className="lg:col-span-4 space-y-4">
-                <div className="flex justify-between items-end">
-                    <h2 className="text-xl font-bold flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-emerald-400" /> Tarefas Diárias</h2>
-                    <span className="text-xs font-bold text-emerald-400 mb-1">{dailyProgress}% concluído</span>
-                </div>
-                <div className="bg-zinc-900/40 border border-white/5 rounded-[2rem] p-6 h-[340px] flex flex-col overflow-hidden">
-                  <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest mb-4">Hoje: {todayString}</p>
-                  <div className="space-y-3 overflow-y-auto custom-scroll pr-2 flex-1">
-                    {dailyTasks.length > 0 ? dailyTasks.map(task => (
-                      <div key={task.id} className="flex items-center gap-3 p-3 bg-zinc-950/40 border border-white/5 rounded-xl group">
-                        <button onClick={() => toggleTask(task.id)} className={`w-5 h-5 rounded border ${task.completed ? 'bg-emerald-500 border-emerald-500 flex items-center justify-center' : 'border-zinc-700'}`}>
-                          {task.completed && <CheckCircle2 className="w-3.5 h-3.5 text-zinc-950" />}
-                        </button>
-                        <span className={`text-sm truncate flex-1 ${task.completed ? 'text-zinc-600 line-through' : ''}`}>{task.text}</span>
-                        <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all">
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )) : (
-                      <div className="h-full flex flex-col items-center justify-center opacity-20">
-                        <ListTodo className="w-12 h-12 mb-2" />
-                        <p className="text-xs font-bold uppercase">Sem tarefas para hoje</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Planejamento */}
-            <div className="space-y-6">
-              <h2 className="text-2xl font-light">Planejamento</h2>
-              <div className="bg-zinc-900/40 border border-white/5 rounded-[2.5rem] p-8 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                  <div className="md:col-span-7 bg-zinc-950/50 border border-white/10 rounded-2xl p-4">
-                    <input 
-                      type="text" 
-                      value={newTaskText} 
-                      onChange={(e) => setNewTaskText(e.target.value)} 
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddTask()} 
-                      placeholder="O que precisa ser feito?" 
-                      className="bg-transparent w-full outline-none text-sm" 
-                    />
-                  </div>
-                  <div className="md:col-span-3 bg-zinc-950/50 border border-white/10 rounded-2xl p-4 flex items-center gap-2">
-                    <CalendarIcon className="w-4 h-4 text-zinc-500" />
-                    <input 
-                      type="date" 
-                      value={newTaskDate} 
-                      onChange={(e) => setNewTaskDate(e.target.value)} 
-                      className="bg-transparent w-full outline-none text-xs text-zinc-300 color-scheme-dark" 
-                    />
-                  </div>
-                  <button 
-                    onClick={handleAddTask} 
-                    className="md:col-span-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-                  >
-                    <Plus className="w-5 h-5" /> Adicionar
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {tasks.map(task => (
-                    <div key={task.id} className="group flex items-center gap-3 p-4 bg-zinc-950/30 border border-white/5 rounded-2xl transition-all hover:bg-zinc-900">
-                      <button onClick={() => toggleTask(task.id)} className={`w-5 h-5 rounded border ${task.completed ? 'bg-emerald-500 border-emerald-500 flex items-center justify-center' : 'border-zinc-700'}`}>
-                        {task.completed && <CheckCircle2 className="w-3.5 h-3.5 text-zinc-950" />}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium truncate ${task.completed ? 'text-zinc-600 line-through' : ''}`}>{task.text}</p>
-                        <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-tighter mt-1">{task.date}</p>
-                      </div>
-                      <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODO IMERSÃO (CRONÓMETRO REGRESSIVO) */}
-        {isImmersionMode && activeSubject && (
-          <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col items-center justify-center p-8 animate-in fade-in duration-500">
-            <button onClick={() => { setIsImmersionMode(false); setIsTimerRunning(false); }} className="absolute top-10 right-10 p-4 bg-white/5 hover:bg-white/10 rounded-full transition-all">
-              <Minimize2 className="w-8 h-8 text-zinc-400" />
-            </button>
-            
-            <div className="text-center space-y-12">
-              <div className="space-y-4">
-                <div className="flex items-center justify-center gap-2">
-                   <div className={`w-3 h-3 rounded-full ${activeSubject.color}`}></div>
-                   <h2 className="text-3xl font-bold tracking-tight text-zinc-400">{activeSubject.name}</h2>
-                </div>
-                {activeSubject.completedSeconds >= (activeSubject.goalHours * 3600) ? (
-                   <div className="flex items-center justify-center gap-2 text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-full border border-emerald-500/20">
-                      <Trophy className="w-5 h-5" />
-                      <span className="text-xs font-black uppercase tracking-widest">Meta de horas alcançada!</span>
-                   </div>
-                ) : (
-                   <p className="text-xs font-black uppercase tracking-[0.4em] text-zinc-600">Tempo Restante para a Meta</p>
-                )}
-              </div>
-
-              {/* Lógica do Cronômetro Regressivo */}
-              <div className="text-[12rem] font-mono font-black tabular-nums tracking-tighter text-white leading-none">
-                {formatTime(Math.max(0, (activeSubject.goalHours * 3600) - activeSubject.completedSeconds))}
-              </div>
-              
-              <div className="space-y-6">
-                <div className="flex gap-10 justify-center">
-                  <button 
-                    onClick={() => setIsTimerRunning(!isTimerRunning)} 
-                    className={`w-32 h-32 rounded-full flex items-center justify-center shadow-2xl transition-all hover:scale-105 active:scale-95 ${isTimerRunning ? 'bg-zinc-900 border-2 border-zinc-700 text-zinc-100' : 'bg-emerald-500 text-zinc-950 shadow-emerald-500/20'}`}
-                  >
-                    {isTimerRunning ? <Pause className="w-12 h-12 fill-current" /> : <Play className="w-12 h-12 fill-current ml-2" />}
-                  </button>
-                </div>
-                <div className="flex flex-col items-center gap-2 opacity-50">
-                   <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Total estudado nesta sessão</p>
-                   <p className="font-mono text-sm">{formatTime(activeSubject.completedSeconds)}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* Modais */}
-      {(editingSubject || isAddingSubject) && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-in zoom-in duration-200">
-          <div className="bg-zinc-900 border border-white/10 rounded-[2.5rem] p-10 max-w-md w-full space-y-8 shadow-2xl">
-            <h2 className="text-2xl font-bold">{editingSubject ? 'Ajustar Meta' : 'Focar em algo Novo'}</h2>
-            <form onSubmit={handleSaveSubject} className="space-y-6">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">O que vais estudar?</label>
-                  <input required name="name" defaultValue={editingSubject?.name || ''} placeholder="Nome da Matéria" className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-4 outline-none focus:border-emerald-500 transition-colors text-white" />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Meta de horas semanais</label>
-                  <input required name="hours" type="number" defaultValue={editingSubject?.goalHours || 5} min="1" max="168" className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-4 outline-none focus:border-emerald-500 transition-colors text-white" />
-                </div>
-              </div>
-              <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => { setEditingSubject(null); setIsAddingSubject(false); }} className="flex-1 py-4 font-bold text-zinc-500 hover:text-white transition-colors">Cancelar</button>
-                <button type="submit" className="flex-1 py-4 bg-emerald-500 text-zinc-950 rounded-2xl font-bold shadow-lg shadow-emerald-500/20 active:scale-95 transition-all">Salvar Meta</button>
-              </div>
-            </form>
-          </div>
+            <h1 class="text-2xl font-extrabold tracking-tight text-white">CHRONOS</h1>
         </div>
-      )}
+        
+        <nav class="flex bg-[#0d0d0d] p-1.5 rounded-2xl border border-white/5 shadow-sm">
+            <button onclick="switchTab('materias')" id="tab-materias" class="px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-widest transition-all bg-[#1a1a1a] text-purple-400 border border-white/5 uppercase">
+                Matérias
+            </button>
+            <button onclick="switchTab('organizacao')" id="tab-organizacao" class="px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-widest transition-all text-gray-500 hover:text-gray-300 uppercase">
+                Organização
+            </button>
+        </nav>
+    </header>
 
-      {/* Estilos Adicionais */}
-      <style>{`
-        .color-scheme-dark {
-          color-scheme: dark;
-        }
-        .custom-scroll::-webkit-scrollbar {
-          width: 4px;
-        }
-        .custom-scroll::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .custom-scroll::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-        }
-      `}</style>
+    <main class="max-w-6xl mx-auto">
+        <!-- Dashboard de Progresso -->
+        <section class="mb-12 fade-in">
+            <div class="bg-[#0d0d0d] border border-white/5 rounded-[2.5rem] p-8 md:p-10 flex flex-col md:flex-row items-center gap-8 md:gap-12">
+                <div class="flex-1 w-full">
+                    <div class="flex justify-between items-end mb-4">
+                        <div>
+                            <h2 class="text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] mb-1">O Teu Progresso</h2>
+                            <div class="flex items-baseline gap-2">
+                                <span id="total-completed" class="text-4xl font-bold text-white tracking-tighter">0h 0m</span>
+                                <span id="total-goal" class="text-gray-600 font-medium text-xs">de 0h 0m</span>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span id="global-percentage" class="text-2xl font-bold text-purple-500 tracking-tighter">0%</span>
+                        </div>
+                    </div>
+                    <div class="w-full bg-white/5 h-3 rounded-full overflow-hidden p-0.5 border border-white/5">
+                        <div id="global-progress-bar" class="h-full bg-purple-600 rounded-full transition-all duration-1000 ease-out shadow-[0_0_20px_rgba(147,51,234,0.3)]" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="hidden md:flex flex-col items-center justify-center border-l border-white/5 pl-12 h-20">
+                    <i data-lucide="activity" class="text-purple-500 w-8 h-8 mb-2 opacity-50"></i>
+                    <span class="text-[9px] font-bold text-gray-600 uppercase tracking-[0.1em]">Performance</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ABA MATÉRIAS -->
+        <div id="content-materias" class="fade-in">
+            <div class="flex justify-between items-end mb-10 px-4 md:px-0">
+                <div>
+                    <h2 class="text-3xl font-bold text-white tracking-tight mb-1">Painel de Estudo</h2>
+                    <p class="text-gray-500 text-sm font-medium">Controle o seu tempo e atinja as suas metas.</p>
+                </div>
+                <button onclick="toggleModal('modal-materia', true)" class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-3 rounded-2xl text-[10px] font-bold tracking-[0.1em] flex items-center gap-2 transition-all shadow-xl shadow-purple-600/10 uppercase">
+                    <i data-lucide="plus" class="w-4 h-4"></i> Adicionar Matéria
+                </button>
+            </div>
+            <div id="subjects-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Conteúdo via JS -->
+            </div>
+        </div>
+
+        <!-- ABA ORGANIZAÇÃO -->
+        <div id="content-organizacao" class="hidden grid grid-cols-1 lg:grid-cols-12 gap-10 fade-in">
+            <div class="lg:col-span-7 space-y-8">
+                <div class="bg-[#0d0d0d] p-10 rounded-[2.5rem] border border-white/5">
+                    <div class="flex justify-between items-center mb-10">
+                        <div>
+                            <h3 id="calendar-month" class="text-2xl font-bold text-white tracking-tight capitalize">Mês</h3>
+                            <p id="calendar-year" class="text-gray-500 text-[10px] font-bold uppercase tracking-[0.2em]">Ano</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="changeMonth(-1)" class="p-3 bg-white/5 rounded-xl hover:text-purple-500 transition-colors"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                            <button onclick="changeMonth(1)" class="p-3 bg-white/5 rounded-xl hover:text-purple-500 transition-colors"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-7 gap-4 text-center text-[9px] text-gray-600 font-bold mb-6 tracking-widest uppercase">
+                        <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sab</div>
+                    </div>
+                    <div id="calendar-days" class="grid grid-cols-7 gap-3">
+                        <!-- Dias via JS -->
+                    </div>
+                </div>
+
+                <div class="bg-[#0d0d0d] p-10 rounded-[2.5rem] border border-white/5">
+                    <h3 class="text-lg font-bold text-white mb-6">Novo Planejamento</h3>
+                    <div class="flex flex-col gap-4">
+                        <div class="flex flex-col sm:flex-row gap-4">
+                            <input id="task-input" type="text" placeholder="Tarefa a realizar..." class="flex-1 bg-[#151515] border border-white/5 rounded-2xl px-6 py-4 text-sm outline-none focus:border-purple-600/50 transition-colors">
+                            <div class="relative flex items-center bg-[#151515] border border-white/5 rounded-2xl px-4 py-4 group focus-within:border-purple-600/50 transition-colors">
+                                <i data-lucide="calendar" class="w-4 h-4 text-gray-500 mr-2"></i>
+                                <input id="task-date" type="date" class="bg-transparent text-xs font-bold text-gray-300 outline-none uppercase tracking-widest">
+                            </div>
+                        </div>
+                        <button onclick="addTask()" class="w-full bg-purple-600 py-4 rounded-2xl text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-purple-500 transition-all shadow-lg shadow-purple-600/10">
+                            Adicionar à Agenda
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-5">
+                <div class="bg-[#0d0d0d] p-10 rounded-[2.5rem] border border-white/5 h-full">
+                    <div class="flex justify-between items-center mb-10">
+                        <div>
+                            <h3 class="text-xl font-bold text-white">Agenda</h3>
+                            <p id="selected-date-label" class="text-[9px] text-gray-500 uppercase font-bold tracking-[0.2em] mt-1">Data</p>
+                        </div>
+                        <span id="task-count" class="text-[9px] font-bold text-purple-400 bg-purple-400/10 px-3 py-1.5 rounded-full uppercase tracking-widest">0 Tarefas</span>
+                    </div>
+                    <div id="tasks-list" class="space-y-4 custom-scrollbar overflow-y-auto max-h-[500px]">
+                        <!-- Tarefas via JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- MODO FOCO -->
+    <div id="timer-screen" class="hidden fixed inset-0 bg-[#050505] z-50 flex flex-col items-center justify-center p-10 fade-in">
+        <button onclick="closeTimer()" class="absolute top-10 right-10 text-gray-600 hover:text-white transition-colors"><i data-lucide="x" class="w-10 h-10"></i></button>
+        <div class="text-center space-y-4 mb-16">
+            <span class="text-[10px] font-bold tracking-[0.5em] text-purple-500 uppercase">Foco Ativo</span>
+            <h2 id="timer-subject-title" class="text-4xl font-bold text-white tracking-tight">Matéria</h2>
+        </div>
+        <div id="timer-display" class="text-[120px] md:text-[180px] font-bold leading-none mb-16 text-white tracking-tighter">00:00:00</div>
+        <div class="flex items-center gap-10">
+            <button onclick="resetCurrentTimer()" class="p-6 bg-white/5 rounded-[2rem] text-gray-500 hover:text-white transition-all border border-white/5"><i data-lucide="rotate-ccw" class="w-8 h-8"></i></button>
+            <button id="play-pause-btn" onclick="toggleTimer()" class="w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-purple-600 text-white shadow-2xl shadow-purple-600/40">
+                <i id="play-pause-icon" data-lucide="play" class="w-12 h-12 fill-current"></i>
+            </button>
+            <div class="w-20"></div>
+        </div>
     </div>
-  );
-}
+
+    <!-- MODAL -->
+    <div id="modal-materia" class="hidden fixed inset-0 bg-black/95 flex items-center justify-center p-6 z-[60] backdrop-blur-xl fade-in">
+        <div class="bg-[#0d0d0d] p-12 rounded-[3rem] w-full max-w-md border border-white/5 shadow-2xl">
+            <h3 class="text-2xl font-bold mb-8 text-white">Nova Matéria</h3>
+            <div class="space-y-6">
+                <div>
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest">Nome da Disciplina</label>
+                    <input id="new-subject-name" type="text" placeholder="Ex: Anatomia" class="w-full bg-[#151515] border border-white/5 p-5 rounded-2xl outline-none focus:border-purple-600/50 mt-2 text-sm">
+                </div>
+                <div>
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest">Meta Diária (Horas)</label>
+                    <input id="new-subject-hours" type="number" placeholder="4" class="w-full bg-[#151515] border border-white/5 p-5 rounded-2xl outline-none focus:border-purple-600/50 mt-2 text-sm">
+                </div>
+                <button onclick="createSubject()" class="w-full bg-purple-600 py-5 rounded-[1.8rem] text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-purple-500 transition-all">Guardar</button>
+                <button onclick="toggleModal('modal-materia', false)" class="w-full text-gray-600 text-[9px] font-bold uppercase tracking-widest hover:text-white transition-colors">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let subjects = [
+            { id: 1, title: 'Geometria Descritiva', totalSeconds: 14400, remainingSeconds: 14400 },
+            { id: 2, title: 'História A', totalSeconds: 10800, remainingSeconds: 5400 },
+            { id: 3, title: 'Psicologia', totalSeconds: 7200, remainingSeconds: 7200 }
+        ];
+        let tasks = [
+            { id: 1, text: 'Revisão capítulo 4', completed: false, date: new Date().toISOString().split('T')[0] }
+        ];
+        
+        let currentTab = 'materias';
+        let currentDate = new Date();
+        let selectedDateStr = new Date().toISOString().split('T')[0];
+        let timerInterval = null;
+        let activeSubjectId = null;
+
+        window.onload = () => {
+            document.getElementById('task-date').value = selectedDateStr;
+            render();
+            lucide.createIcons();
+        };
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('content-materias').classList.toggle('hidden', tab !== 'materias');
+            document.getElementById('content-organizacao').classList.toggle('hidden', tab !== 'organizacao');
+            
+            const btnMat = document.getElementById('tab-materias');
+            const btnOrg = document.getElementById('tab-organizacao');
+            
+            if(tab === 'materias') {
+                btnMat.className = "px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-widest transition-all bg-[#1a1a1a] text-purple-400 border border-white/5 uppercase";
+                btnOrg.className = "px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-widest transition-all text-gray-500 hover:text-gray-300 uppercase";
+            } else {
+                btnMat.className = "px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-widest transition-all text-gray-500 hover:text-gray-300 uppercase";
+                btnOrg.className = "px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-widest transition-all bg-[#1a1a1a] text-purple-400 border border-white/5 uppercase";
+            }
+            render();
+        }
+
+        function toggleModal(id, show) {
+            document.getElementById(id).classList.toggle('hidden', !show);
+        }
+
+        function formatTime(s) {
+            const h = Math.floor(s / 3600).toString().padStart(2, '0');
+            const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
+            const sec = (s % 60).toString().padStart(2, '0');
+            return `${h}:${m}:${sec}`;
+        }
+
+        function formatShortTime(s) {
+            return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+        }
+
+        function render() {
+            renderDashboard();
+            if (currentTab === 'materias') renderSubjects();
+            else renderOrganization();
+            lucide.createIcons();
+        }
+
+        function renderDashboard() {
+            const totalGoal = subjects.reduce((a, b) => a + b.totalSeconds, 0);
+            const totalRemaining = subjects.reduce((a, b) => a + b.remainingSeconds, 0);
+            const completed = totalGoal - totalRemaining;
+            const pct = totalGoal > 0 ? (completed / totalGoal) * 100 : 0;
+
+            document.getElementById('total-completed').innerText = formatShortTime(completed);
+            document.getElementById('total-goal').innerText = `de ${formatShortTime(totalGoal)}`;
+            document.getElementById('global-percentage').innerText = `${pct.toFixed(0)}%`;
+            document.getElementById('global-progress-bar').style.width = `${pct}%`;
+        }
+
+        function renderSubjects() {
+            const grid = document.getElementById('subjects-grid');
+            grid.innerHTML = subjects.map(sub => `
+                <div class="bg-[#0d0d0d] border border-white/5 rounded-[2.5rem] p-8 relative group hover:border-purple-500/30 transition-all duration-300 fade-in">
+                    <div class="mb-8">
+                        <h3 class="text-xl font-bold text-white mb-2">${sub.title}</h3>
+                        <div class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                            <span class="text-[9px] font-bold text-gray-500 uppercase tracking-[0.1em]">Ativo</span>
+                        </div>
+                    </div>
+                    <div class="space-y-4 mb-10">
+                        <div class="flex justify-between text-[10px] font-bold tracking-widest uppercase">
+                            <span class="text-gray-500">Total: ${formatShortTime(sub.totalSeconds)}</span>
+                            <span class="text-purple-400">Falta: ${formatTime(sub.remainingSeconds)}</span>
+                        </div>
+                        <div class="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                            <div class="h-full bg-purple-600 rounded-full transition-all duration-1000" style="width: ${((sub.totalSeconds - sub.remainingSeconds)/sub.totalSeconds)*100}%"></div>
+                        </div>
+                    </div>
+                    <button onclick="startSession(${sub.id})" class="w-full bg-white/5 hover:bg-purple-600 text-gray-300 hover:text-white py-4 rounded-2xl text-[9px] font-bold uppercase tracking-[0.2em] border border-white/5 transition-all">
+                        Iniciar Sessão
+                    </button>
+                    <button onclick="deleteSubject(${sub.id})" class="absolute top-6 right-6 opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-500 transition-all">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function renderOrganization() {
+            renderCalendar();
+            renderTasks();
+        }
+
+        function renderCalendar() {
+            const monthLabel = document.getElementById('calendar-month');
+            const yearLabel = document.getElementById('calendar-year');
+            const grid = document.getElementById('calendar-days');
+            
+            const month = currentDate.getMonth();
+            const year = currentDate.getFullYear();
+            
+            monthLabel.innerText = new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(currentDate);
+            yearLabel.innerText = year;
+
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const todayStr = new Date().toISOString().split('T')[0];
+
+            grid.innerHTML = '';
+            for (let i = 0; i < firstDay; i++) grid.innerHTML += '<div></div>';
+            
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateObj = new Date(year, month, d);
+                const dStr = dateObj.toISOString().split('T')[0];
+                const isSelected = dStr === selectedDateStr;
+                const isToday = dStr === todayStr;
+
+                grid.innerHTML += `
+                    <div onclick="selectDate('${dStr}')" class="aspect-square flex items-center justify-center text-sm rounded-2xl transition-all cursor-pointer font-bold 
+                        ${isSelected ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20 scale-110' : 
+                          isToday ? 'border border-purple-500/30 text-purple-400' : 'hover:bg-white/5 text-gray-500 hover:text-gray-200'}">
+                        ${d}
+                    </div>
+                `;
+            }
+        }
+
+        function renderTasks() {
+            const list = document.getElementById('tasks-list');
+            const label = document.getElementById('selected-date-label');
+            const count = document.getElementById('task-count');
+            
+            // Corrige o problema da data exibindo o dia anterior
+            const [year, month, day] = selectedDateStr.split('-').map(Number);
+            const correctDate = new Date(year, month - 1, day);
+            
+            const daily = tasks.filter(t => t.date === selectedDateStr);
+            label.innerText = correctDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
+            count.innerText = `${daily.length} Tarefas`;
+
+            if (daily.length === 0) {
+                list.innerHTML = '<div class="text-center py-20 text-gray-700 text-xs font-medium italic">Agenda livre.</div>';
+                return;
+            }
+
+            list.innerHTML = daily.map(t => `
+                <div class="flex items-center gap-4 p-5 bg-[#151515] rounded-[1.8rem] border border-white/5 group fade-in">
+                    <div onclick="toggleTask(${t.id})" class="w-6 h-6 rounded-lg flex items-center justify-center border-2 cursor-pointer transition-colors ${t.completed ? 'bg-purple-600 border-purple-600' : 'border-gray-800'}">
+                        ${t.completed ? '<i data-lucide="check" class="w-4 h-4 text-white"></i>' : ''}
+                    </div>
+                    <span class="flex-1 text-sm font-medium ${t.completed ? 'text-gray-600 line-through' : 'text-gray-200'}">${t.text}</span>
+                    <button onclick="deleteTask(${t.id})" class="opacity-0 group-hover:opacity-100 p-2 text-gray-700 hover:text-red-500 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function selectDate(dStr) {
+            selectedDateStr = dStr;
+            render();
+        }
+
+        function changeMonth(dir) {
+            currentDate.setMonth(currentDate.getMonth() + dir);
+            render();
+        }
+
+        function createSubject() {
+            const name = document.getElementById('new-subject-name').value;
+            const hours = parseInt(document.getElementById('new-subject-hours').value);
+            if (!name || !hours) return;
+            
+            subjects.push({ id: Date.now(), title: name, totalSeconds: hours * 3600, remainingSeconds: hours * 3600 });
+            toggleModal('modal-materia', false);
+            document.getElementById('new-subject-name').value = '';
+            document.getElementById('new-subject-hours').value = '';
+            render();
+        }
+
+        function deleteSubject(id) {
+            subjects = subjects.filter(s => s.id !== id);
+            render();
+        }
+
+        function addTask() {
+            const text = document.getElementById('task-input').value;
+            const date = document.getElementById('task-date').value;
+            if (!text || !date) return;
+
+            tasks.push({ id: Date.now(), text, date, completed: false });
+            document.getElementById('task-input').value = '';
+            render();
+        }
+
+        function toggleTask(id) {
+            tasks = tasks.map(t => t.id === id ? {...t, completed: !t.completed} : t);
+            render();
+        }
+
+        function deleteTask(id) {
+            tasks = tasks.filter(t => t.id !== id);
+            render();
+        }
+
+        function startSession(id) {
+            activeSubjectId = id;
+            const sub = subjects.find(s => s.id === id);
+            document.getElementById('timer-subject-title').innerText = sub.title;
+            document.getElementById('timer-display').innerText = formatTime(sub.remainingSeconds);
+            document.getElementById('timer-screen').classList.remove('hidden');
+        }
+
+        function toggleTimer() {
+            const btn = document.getElementById('play-pause-btn');
+            const icon = document.getElementById('play-pause-icon');
+            
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+                btn.className = "w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-purple-600 text-white shadow-2xl shadow-purple-600/40";
+                icon.setAttribute('data-lucide', 'play');
+            } else {
+                timerInterval = setInterval(() => {
+                    const sub = subjects.find(s => s.id === activeSubjectId);
+                    if (sub.remainingSeconds > 0) {
+                        sub.remainingSeconds--;
+                        document.getElementById('timer-display').innerText = formatTime(sub.remainingSeconds);
+                        renderDashboard();
+                    } else {
+                        toggleTimer();
+                    }
+                }, 1000);
+                btn.className = "w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-amber-600/10 text-amber-500 border-2 border-amber-500/30";
+                icon.setAttribute('data-lucide', 'pause');
+            }
+            lucide.createIcons();
+        }
+
+        function resetCurrentTimer() {
+            const sub = subjects.find(s => s.id === activeSubjectId);
+            sub.remainingSeconds = sub.totalSeconds;
+            document.getElementById('timer-display').innerText = formatTime(sub.remainingSeconds);
+            render();
+        }
+
+        function closeTimer() {
+            if (timerInterval) toggleTimer();
+            document.getElementById('timer-screen').classList.add('hidden');
+            render();
+        }
+    </script>
+</body>
+</html>
