@@ -197,20 +197,32 @@
     </div>
 
     <script>
-        let subjects = [
-            { id: 1, title: 'Geometria Descritiva', totalSeconds: 14400, remainingSeconds: 14400 },
-            { id: 2, title: 'História A', totalSeconds: 10800, remainingSeconds: 5400 },
-            { id: 3, title: 'Psicologia', totalSeconds: 7200, remainingSeconds: 7200 }
-        ];
-        let tasks = [
-            { id: 1, text: 'Revisão capítulo 4', completed: false, date: new Date().toISOString().split('T')[0] }
-        ];
+        // Configurações Iniciais e Carregamento de Dados (LocalStorage)
+        const storageKey = 'chronos_data_v1';
+        let savedData = JSON.parse(localStorage.getItem(storageKey)) || {
+            subjects: [
+                { id: 1, title: 'Geometria Descritiva', totalSeconds: 14400, remainingSeconds: 14400 },
+                { id: 2, title: 'História A', totalSeconds: 10800, remainingSeconds: 5400 },
+                { id: 3, title: 'Psicologia', totalSeconds: 7200, remainingSeconds: 7200 }
+            ],
+            tasks: [
+                { id: 1, text: 'Revisão capítulo 4', completed: false, date: new Date().toISOString().split('T')[0] }
+            ]
+        };
+
+        let subjects = savedData.subjects;
+        let tasks = savedData.tasks;
         
         let currentTab = 'materias';
         let currentDate = new Date();
         let selectedDateStr = new Date().toISOString().split('T')[0];
         let timerInterval = null;
         let activeSubjectId = null;
+
+        // Salvar dados no navegador
+        function saveData() {
+            localStorage.setItem(storageKey, JSON.stringify({ subjects, tasks }));
+        }
 
         window.onload = () => {
             document.getElementById('task-date').value = selectedDateStr;
@@ -344,7 +356,6 @@
             const label = document.getElementById('selected-date-label');
             const count = document.getElementById('task-count');
             
-            // Corrige o problema da data exibindo o dia anterior
             const [year, month, day] = selectedDateStr.split('-').map(Number);
             const correctDate = new Date(year, month - 1, day);
             
@@ -388,11 +399,13 @@
             toggleModal('modal-materia', false);
             document.getElementById('new-subject-name').value = '';
             document.getElementById('new-subject-hours').value = '';
+            saveData();
             render();
         }
 
         function deleteSubject(id) {
             subjects = subjects.filter(s => s.id !== id);
+            saveData();
             render();
         }
 
@@ -403,16 +416,19 @@
 
             tasks.push({ id: Date.now(), text, date, completed: false });
             document.getElementById('task-input').value = '';
+            saveData();
             render();
         }
 
         function toggleTask(id) {
             tasks = tasks.map(t => t.id === id ? {...t, completed: !t.completed} : t);
+            saveData();
             render();
         }
 
         function deleteTask(id) {
             tasks = tasks.filter(t => t.id !== id);
+            saveData();
             render();
         }
 
@@ -433,6 +449,7 @@
                 timerInterval = null;
                 btn.className = "w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-purple-600 text-white shadow-2xl shadow-purple-600/40";
                 icon.setAttribute('data-lucide', 'play');
+                saveData(); // Salva o progresso quando pausa
             } else {
                 timerInterval = setInterval(() => {
                     const sub = subjects.find(s => s.id === activeSubjectId);
@@ -442,6 +459,7 @@
                         renderDashboard();
                     } else {
                         toggleTimer();
+                        saveData();
                     }
                 }, 1000);
                 btn.className = "w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-amber-600/10 text-amber-500 border-2 border-amber-500/30";
@@ -454,12 +472,14 @@
             const sub = subjects.find(s => s.id === activeSubjectId);
             sub.remainingSeconds = sub.totalSeconds;
             document.getElementById('timer-display').innerText = formatTime(sub.remainingSeconds);
+            saveData();
             render();
         }
 
         function closeTimer() {
             if (timerInterval) toggleTimer();
             document.getElementById('timer-screen').classList.add('hidden');
+            saveData();
             render();
         }
     </script>
