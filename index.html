@@ -106,6 +106,7 @@
 
         <!-- ABA ORGANIZAÇÃO -->
         <div id="content-organizacao" class="hidden grid grid-cols-1 lg:grid-cols-12 gap-10 fade-in">
+            <!-- Coluna Esquerda: Calendário e Nova Tarefa -->
             <div class="lg:col-span-7 space-y-8">
                 <div class="bg-[#0d0d0d] p-10 rounded-[2.5rem] border border-white/5">
                     <div class="flex justify-between items-center mb-10">
@@ -143,6 +144,7 @@
                 </div>
             </div>
 
+            <!-- Coluna Direita: Lista de Tarefas -->
             <div class="lg:col-span-5">
                 <div class="bg-[#0d0d0d] p-10 rounded-[2.5rem] border border-white/5 h-full">
                     <div class="flex justify-between items-center mb-10">
@@ -187,8 +189,17 @@
                     <input id="new-subject-name" type="text" placeholder="Ex: Anatomia" class="w-full bg-[#151515] border border-white/5 p-5 rounded-2xl outline-none focus:border-purple-600/50 mt-2 text-sm">
                 </div>
                 <div>
-                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest">Meta Diária (Horas)</label>
-                    <input id="new-subject-hours" type="number" placeholder="4" class="w-full bg-[#151515] border border-white/5 p-5 rounded-2xl outline-none focus:border-purple-600/50 mt-2 text-sm">
+                    <label class="text-[9px] font-bold text-gray-600 uppercase tracking-widest">Meta de Tempo</label>
+                    <div class="flex gap-4 mt-2">
+                        <div class="flex-1">
+                            <input id="new-subject-hours" type="number" min="0" placeholder="H" class="w-full bg-[#151515] border border-white/5 p-5 rounded-2xl outline-none focus:border-purple-600/50 text-sm">
+                            <p class="text-[8px] text-gray-500 mt-1 uppercase text-center">Horas</p>
+                        </div>
+                        <div class="flex-1">
+                            <input id="new-subject-minutes" type="number" min="0" max="59" placeholder="M" class="w-full bg-[#151515] border border-white/5 p-5 rounded-2xl outline-none focus:border-purple-600/50 text-sm">
+                            <p class="text-[8px] text-gray-500 mt-1 uppercase text-center">Minutos</p>
+                        </div>
+                    </div>
                 </div>
                 <button onclick="createSubject()" class="w-full bg-purple-600 py-5 rounded-[1.8rem] text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-purple-500 transition-all">Guardar</button>
                 <button onclick="toggleModal('modal-materia', false)" class="w-full text-gray-600 text-[9px] font-bold uppercase tracking-widest hover:text-white transition-colors">Cancelar</button>
@@ -203,21 +214,23 @@
         let savedDataRaw = localStorage.getItem(storageKey);
         let subjects = [];
         let tasks = [];
+        let lastResetWeek = null; // Guardamos a semana do último reset
 
         if (savedDataRaw) {
             const parsed = JSON.parse(savedDataRaw);
             subjects = parsed.subjects || [];
             tasks = parsed.tasks || [];
+            lastResetWeek = parsed.lastResetWeek || null;
         } else {
-            // Dados Iniciais se estiver vazio
+            // Dados Iniciais
             subjects = [
                 { id: 1, title: 'Geometria Descritiva', totalSeconds: 14400, remainingSeconds: 14400 },
-                { id: 2, title: 'História A', totalSeconds: 10800, remainingSeconds: 5400 },
+                { id: 2, title: 'História A', totalSeconds: 10800, remainingSeconds: 10800 },
                 { id: 3, title: 'Psicologia', totalSeconds: 7200, remainingSeconds: 7200 }
             ];
-            tasks = [
-                { id: 1, text: 'Revisão capítulo 4', completed: false, date: new Date().toISOString().split('T')[0] }
-            ];
+            tasks = [];
+            // Definimos a semana atual como inicial
+            lastResetWeek = getWeekNumber(new Date());
         }
         
         let currentTab = 'materias';
@@ -226,12 +239,46 @@
         let timerInterval = null;
         let activeSubjectId = null;
 
+        // Função para obter o número da semana no ano (ISO 8601 aproximado para reset semanal)
+        function getWeekNumber(d) {
+            d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+            var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            var weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+            return d.getUTCFullYear() + "-" + weekNo;
+        }
+
+        // Função de Reset Semanal (Ocorre sempre que a semana muda)
+        // Como o domingo é o início da semana de estudo para muitos, 
+        // a mudança de número de semana do JS acontece geralmente entre domingo/segunda.
+        function checkAutoReset() {
+            const currentWeek = getWeekNumber(new Date());
+            
+            if (!lastResetWeek) {
+                lastResetWeek = currentWeek;
+                saveData();
+                return;
+            }
+
+            // Se a semana atual for diferente da semana do último reset, as metas são restauradas
+            if (currentWeek !== lastResetWeek) {
+                console.log("CHRONOS: Nova semana detectada. Restaurando metas semanais.");
+                subjects = subjects.map(s => ({
+                    ...s,
+                    remainingSeconds: s.totalSeconds
+                }));
+                lastResetWeek = currentWeek;
+                saveData();
+            }
+        }
+
         // Salvar dados no navegador
         function saveData() {
-            localStorage.setItem(storageKey, JSON.stringify({ subjects, tasks }));
+            localStorage.setItem(storageKey, JSON.stringify({ subjects, tasks, lastResetWeek }));
         }
 
         window.onload = () => {
+            checkAutoReset(); // Verifica se precisa resetar ao abrir
             document.getElementById('task-date').value = selectedDateStr;
             render();
             lucide.createIcons();
@@ -267,7 +314,9 @@
         }
 
         function formatShortTime(s) {
-            return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            return `${h}h ${m}m`;
         }
 
         function render() {
@@ -363,11 +412,11 @@
             const label = document.getElementById('selected-date-label');
             const count = document.getElementById('task-count');
             
-            const [year, month, day] = selectedDateStr.split('-').map(Number);
-            const correctDate = new Date(year, month - 1, day);
-            
             const daily = tasks.filter(t => t.date === selectedDateStr);
-            label.innerText = correctDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
+            const [y, m, d] = selectedDateStr.split('-').map(Number);
+            const dateObj = new Date(y, m-1, d);
+
+            label.innerText = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
             count.innerText = `${daily.length} Tarefas`;
 
             if (daily.length === 0) {
@@ -400,35 +449,25 @@
         function createSubject() {
             const nameInput = document.getElementById('new-subject-name');
             const hoursInput = document.getElementById('new-subject-hours');
+            const minsInput = document.getElementById('new-subject-minutes');
             
             const name = nameInput.value.trim();
-            const hours = parseInt(hoursInput.value);
+            const h = parseInt(hoursInput.value) || 0;
+            const m = parseInt(minsInput.value) || 0;
+            const totalSeconds = (h * 3600) + (m * 60);
             
-            if (!name) {
-                nameInput.classList.add('border-red-500/50');
-                return;
-            }
-            if (!hours || hours <= 0) {
-                hoursInput.classList.add('border-red-500/50');
-                return;
-            }
+            if (!name || totalSeconds <= 0) return;
 
-            // Adiciona a nova matéria à lista global
-            const newSubject = {
+            subjects.push({
                 id: Date.now(),
                 title: name,
-                totalSeconds: hours * 3600,
-                remainingSeconds: hours * 3600
-            };
-
-            subjects.push(newSubject);
+                totalSeconds: totalSeconds,
+                remainingSeconds: totalSeconds
+            });
             
-            // Limpa inputs e fecha modal
             nameInput.value = '';
             hoursInput.value = '';
-            nameInput.classList.remove('border-red-500/50');
-            hoursInput.classList.remove('border-red-500/50');
-            
+            minsInput.value = '';
             toggleModal('modal-materia', false);
             saveData();
             render();
@@ -444,7 +483,6 @@
             const text = document.getElementById('task-input').value;
             const date = document.getElementById('task-date').value;
             if (!text || !date) return;
-
             tasks.push({ id: Date.now(), text, date, completed: false });
             document.getElementById('task-input').value = '';
             saveData();
