@@ -214,7 +214,7 @@
         let savedDataRaw = localStorage.getItem(storageKey);
         let subjects = [];
         let tasks = [];
-        let lastResetWeek = null; // Guardamos a semana do último reset
+        let lastResetWeek = null; 
 
         if (savedDataRaw) {
             const parsed = JSON.parse(savedDataRaw);
@@ -222,14 +222,12 @@
             tasks = parsed.tasks || [];
             lastResetWeek = parsed.lastResetWeek || null;
         } else {
-            // Dados Iniciais
             subjects = [
                 { id: 1, title: 'Geometria Descritiva', totalSeconds: 14400, remainingSeconds: 14400 },
                 { id: 2, title: 'História A', totalSeconds: 10800, remainingSeconds: 10800 },
                 { id: 3, title: 'Psicologia', totalSeconds: 7200, remainingSeconds: 7200 }
             ];
             tasks = [];
-            // Definimos a semana atual como inicial
             lastResetWeek = getWeekNumber(new Date());
         }
         
@@ -239,7 +237,6 @@
         let timerInterval = null;
         let activeSubjectId = null;
 
-        // Função para obter o número da semana no ano (ISO 8601 aproximado para reset semanal)
         function getWeekNumber(d) {
             d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
             d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
@@ -248,9 +245,6 @@
             return d.getUTCFullYear() + "-" + weekNo;
         }
 
-        // Função de Reset Semanal (Ocorre sempre que a semana muda)
-        // Como o domingo é o início da semana de estudo para muitos, 
-        // a mudança de número de semana do JS acontece geralmente entre domingo/segunda.
         function checkAutoReset() {
             const currentWeek = getWeekNumber(new Date());
             
@@ -260,7 +254,6 @@
                 return;
             }
 
-            // Se a semana atual for diferente da semana do último reset, as metas são restauradas
             if (currentWeek !== lastResetWeek) {
                 console.log("CHRONOS: Nova semana detectada. Restaurando metas semanais.");
                 subjects = subjects.map(s => ({
@@ -272,13 +265,12 @@
             }
         }
 
-        // Salvar dados no navegador
         function saveData() {
             localStorage.setItem(storageKey, JSON.stringify({ subjects, tasks, lastResetWeek }));
         }
 
         window.onload = () => {
-            checkAutoReset(); // Verifica se precisa resetar ao abrir
+            checkAutoReset();
             document.getElementById('task-date').value = selectedDateStr;
             render();
             lucide.createIcons();
@@ -514,23 +506,46 @@
             const icon = document.getElementById('play-pause-icon');
             
             if (timerInterval) {
+                // Pause
                 clearInterval(timerInterval);
                 timerInterval = null;
                 btn.className = "w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-purple-600 text-white shadow-2xl shadow-purple-600/40";
                 icon.setAttribute('data-lucide', 'play');
                 saveData(); 
             } else {
+                // Start
+                let lastTime = Date.now();
+                
                 timerInterval = setInterval(() => {
-                    const subIndex = subjects.findIndex(s => s.id === activeSubjectId);
-                    if (subIndex !== -1 && subjects[subIndex].remainingSeconds > 0) {
-                        subjects[subIndex].remainingSeconds--;
-                        document.getElementById('timer-display').innerText = formatTime(subjects[subIndex].remainingSeconds);
-                        renderDashboard();
-                    } else {
-                        toggleTimer();
-                        saveData();
+                    const now = Date.now();
+                    const delta = now - lastTime;
+                    
+                    if (delta >= 1000) {
+                        const secondsPassed = Math.floor(delta / 1000);
+                        const subIndex = subjects.findIndex(s => s.id === activeSubjectId);
+                        
+                        if (subIndex !== -1 && subjects[subIndex].remainingSeconds > 0) {
+                            // Calculate deduction based on real elapsed time
+                            const deduction = Math.min(secondsPassed, subjects[subIndex].remainingSeconds);
+                            subjects[subIndex].remainingSeconds -= deduction;
+                            
+                            // Advance lastTime by the handled duration
+                            lastTime += secondsPassed * 1000;
+
+                            document.getElementById('timer-display').innerText = formatTime(subjects[subIndex].remainingSeconds);
+                            renderDashboard();
+                            
+                            if (subjects[subIndex].remainingSeconds <= 0) {
+                                toggleTimer();
+                                saveData();
+                            }
+                        } else {
+                            toggleTimer();
+                            saveData();
+                        }
                     }
-                }, 1000);
+                }, 200); // Check frequently (5 times a second) to catch up quickly
+                
                 btn.className = "w-32 h-32 rounded-[3.5rem] flex items-center justify-center transition-all transform active:scale-95 bg-amber-600/10 text-amber-500 border-2 border-amber-500/30";
                 icon.setAttribute('data-lucide', 'pause');
             }
